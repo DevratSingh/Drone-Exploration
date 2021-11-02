@@ -10,6 +10,6 @@ This project was implemented using ROS, with the implemented components being gr
 #### Exploration through KF localization, Traffic sign detection using CNN and RRT-based exploration 
 [![DD2419ph1](https://i.postimg.cc/Qd5sttnM/thumbph1.png)](https://youtu.be/8_smu3H0q7g "Project Video")
 
-[System Design Figure](Images/SysDiagph1.png)
+[System Design Figure](SysDiagph1.png)
 
 [Brief System Design Report](Brief%20System%20Design%20Report%20_Crazyflie%20Project.pdf)
