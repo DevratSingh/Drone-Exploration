@@ -1,0 +1,46 @@
+<launch>
+    <arg name= "world_name" default= "sample"/>
+    <arg name= "ch" default= '84'/>
+    
+    <include file="$(find dd2419_launch)/launch/base.launch">
+        <arg name="ch" value="$(arg ch)"/>
+    </include>
+    
+    <param name="filepath" value="/home/devrat/dd2419_ws/src/DD2419_proj/src/planning"/>
+    
+    <param name="map_resolution" value= '0.1'/>                     <!-- Resolution of gridmap -->
+    <param name="inflate_value" value= '60'/>                       <!-- Value of grid cell that is inflated-->
+    <param name="inflate_radius" value= '0.33'/>                    <!-- How much the walls are inflated -->
+    <param name="rrt_inflate_radius" value= '0.25'/>                <!-- How much obstacles are inflated for rrt_planning -->
+    <param name="explored_radius" value= '0.2'/>                    <!-- Radius of circle that is makred as explored around drone -->
+    <param name="reach_dist" value= '0.1'/>                         <!-- Distance where drone is considered to reach the final point in path -->
+    <param name="wp_reach_dist" value= '0.2'/>                      <!-- Distance where drone is considered to reach the intermediate waypoint in path -->
+    <param name="task_node_rate" value= '2'/>                       <!-- Rate for task node -->
+    <param name="node_rate" value= '15'/>                           <!-- Rate for exploration nodes -->
+    <param name="infogain_radius" value= '0.5'/>                    <!-- Radius to find the info gain in -->
+    <param name="infogain_weight" value= '2'/>                      <!-- How much to weigh information gain -->
+    <param name="cost_weight" value= '1'/>                          <!-- How much to weigh dist to frontier point-->
+    <param name="h_gain" value= '3'/>                               <!-- Hysterisis gain-->
+    <param name="h_radius" value= '0.1'/>                           <!-- Hysterisis radius-->
+    <param name="wait_time" value= '5.0'/>                          <!-- How long to wait before starting exploration-->
+    <param name="yaw_towards_motion" value= 'false' />              <!-- Should the yaw be constant or towards the direction of motion-->
+    <param name="yaw_const_angle" value= '3.14' />                  <!-- If yaw is chosen to be constant then specify the angle in radians-->
+    <param name="pts_in_bet" value= '0.1' />                        <!-- Controls the number of intermediate points in between waypoints-->
+    <param name="yaw_control" value= 'true' />
+    <param name="plan_3D" value= 'true' />
+
+    <include file="$(find dd2419_launch)/launch/world_publisher.launch">
+        <arg name="world_name" value="$(arg world_name)"/>
+    </include>
+
+    <node type="rviz" name="rviz" pkg="rviz" args="-d $(find dd2419_proj)/rviz/rvizexp.rviz" output="screen" />
+    <node name="displaymapmarkers" pkg="dd2419_proj" type="displaymapmarkers" output="screen" args="$(find dd2419_proj)/world_json/$(arg world_name).world.json"/>
+    <node name="EKF_localization" pkg="dd2419_proj" type="EKF_localization" output="screen" args="$(find dd2419_proj)/world_json/$(arg world_name).world.json"/>
+    <node name="localfrontier" pkg="dd2419_proj" type="localfrontierph1.py" output="screen" args="$(find dd2419_proj)/world_json/$(arg world_name).world.json"/>
+    <node name="perception" pkg="dd2419_proj" type="detect.py" output="screen" args="$(find dd2419_proj)/perception_resources/"/>
+    
+    <include file="$(find dd2419_proj)/launch/explorationph1.launch">
+        <arg name="world_name" value="$(arg world_name)"/>
+    </include>
+    
+</launch>

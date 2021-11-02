@@ -1,0 +1,41 @@
+{
+  "airspace": {
+    "min": [-4, -4, 0.0],
+    "max": [ 4,  4, 2.5]
+  },
+
+  "gate_size": [0.40, 0.40],
+  "marker_size": [0.175, 0.175],
+  "roadsign_size": [0.185, 0.185],
+
+  "markers": [
+    {"id": 1, "pose": {"position": [0.84, 0.45, 0.60], "orientation": [90.0, -90.0, 0.0]}},
+    {"id": 2, "pose": {"position": [-0.69, 1.49, 0.60], "orientation": [90.0, -90.0, 90.0]}},
+    {"id": 3, "pose": {"position": [0.39, 2.06, 0.60], "orientation": [90.0, -90.0, 90.0]}},
+    {"id": 6, "pose": {"position": [-1.74,  0.53, 0.45], "orientation": [90.0, -90.0, 180.0]}}
+  ],
+
+  "gates": [
+    {"id": 0, "heading":   90.0, "position": [ -2.0, 2.8,  0.00]}
+  ],
+
+  "walls": [
+
+    {"plane": {"start": [-3, -1.5, 0.0],  "stop": [2, -1.5, 1.25]}},
+    {"plane": {"start": [2, -1.5, 0.0],   "stop": [2, 2, 1.25]}},
+    {"plane": {"start": [-3, -1.5, 0.0],  "stop": [-3, 1, 1.25]}},
+    {"plane": {"start": [-3, 1, 0.0],  "stop": [-0.41, 1, 1.25]}},
+    {"plane": {"start": [-0.41, 0, 0.0], "stop": [-0.41, 1, 0.69]}},
+    {"plane": {"start": [-0.41, 1, 0.0], "stop": [-0.41, 2, 1.25]}},
+    {"plane": {"start": [-0.41, 2, 0.0],  "stop": [2, 2, 1.25]}}
+
+  ],
+
+  "roadsigns": [
+    {"sign": "no_bicycle",              "pose": {"position": [-1.04, 1.49, 0.60], "orientation": [90.0, -90.0, 90.0]}},
+    {"sign": "residential",             "pose": {"position": [0.10, 2.06, 0.60], "orientation": [90.0, -90.0, 90.0]}},
+    {"sign": "road_narrows_from_left",  "pose": {"position": [-1.74,  0.23, 0.51], "orientation": [90.0, -90.0, 180.0]}},
+    {"sign": "roundabout_warning",      "pose": {"position": [0.84, 0.87, 0.60], "orientation": [90.0, -90.0, 0.0]}}
+  ]
+
+}

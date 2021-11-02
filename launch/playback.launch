@@ -1,0 +1,4 @@
+<launch>
+    <arg name= "world_name" default= "sample"/>
+    <node type="rviz" name="rviz" pkg="rviz" args="-d $(find dd2419_proj)/rviz/rvizexp.rviz" output="screen" />
+</launch>

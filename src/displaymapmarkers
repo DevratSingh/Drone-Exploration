@@ -1,0 +1,87 @@
+#!/usr/bin/env python
+
+import sys
+import math
+import json
+
+import rospy
+import tf2_ros 
+from tf.transformations import quaternion_from_euler
+from geometry_msgs.msg import TransformStamped, Vector3
+
+category_dict = {
+  'no_bicycle': 0,
+  'airport': 1,
+  'dangerous_curve_left': 2,
+  'dangerous_curve_right': 3,
+  'follow_left': 4,
+  'follow_right': 5,
+  'junction': 6,
+  'no_heavy_truck': 7,
+  'no_parking': 8,
+  'no_stopping_and_parking': 9,
+  'residential': 10,
+  'road_narrows_from_left': 11,
+  'road_narrows_from_right': 12,
+  'roundabout_warning': 13,
+  'stop': 14
+}
+
+
+def transform_from_marker(m,id,j,frame):
+    t = TransformStamped()
+    t.header.frame_id = 'map'
+    t.child_frame_id = frame + str(id) + str('#') + str(j)
+    t.transform.translation = Vector3(*m['pose']['position'])
+    roll, pitch, yaw = m['pose']['orientation']
+    (t.transform.rotation.x,
+     t.transform.rotation.y,
+     t.transform.rotation.z,
+     t.transform.rotation.w) = quaternion_from_euler(math.radians(roll),
+                                                     math.radians(pitch),
+                                                     math.radians(yaw))
+    return t
+
+
+def main(argv=sys.argv):
+    # Let ROS filter through the arguments
+    args = rospy.myargv(argv=argv)
+
+    # Load world JSON
+    with open(args[1], 'rb') as f:
+        world = json.load(f)
+
+    # Create a transform for each marker
+    transforms = []
+    #print(world['markers'][0]['id'])
+    id = 1
+    j = 0
+    for m in world['markers']:
+
+        #if not id == m['id']:
+            #id = m['id']
+            #j = 0
+
+        transforms.append(transform_from_marker(m,id,j,frame='marker_'))
+        j+=1
+
+    # tf for trafficsigns
+    id = 0
+    j = 0
+    for m in world['roadsigns']:
+
+        if not id == m['sign']:
+            id = m['sign']
+            j = 0
+
+        transforms.append(transform_from_marker(m,category_dict[id],j,frame='sign_'))
+        j+=1
+
+    # Publish these transforms statically forever
+    rospy.init_node('displaymapmarkers')
+    broadcaster = tf2_ros.StaticTransformBroadcaster()
+    broadcaster.sendTransform(transforms)
+    rospy.spin()
+
+if __name__ == "__main__":
+    main()

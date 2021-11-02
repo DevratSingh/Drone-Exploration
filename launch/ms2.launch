@@ -1,0 +1,10 @@
+<launch>
+    <arg name= "world_name" default= "sample"/>
+    <node type="rviz" name="rviz" pkg="rviz" args="-d $(find dd2419_proj)/rviz/rvizph1.rviz" output="screen" />
+    <node name="displaymapmarkers" pkg="dd2419_proj" type="displaymapmarkers" output="screen" args="$(find dd2419_proj)/world_json/$(arg world_name).world.json"/>
+    <node name="EKF_localization" pkg="dd2419_proj" type="EKF_localization" output="screen" args="$(find dd2419_proj)/world_json/$(arg world_name).world.json"/>
+    <!--<node name="detectmarker" pkg="dd2419_proj" type="detectmarker" output="screen"/>-->
+    <node name="brain" pkg="dd2419_proj" type="brain.py" output="screen"/>
+    <node name="mapNode" pkg="dd2419_proj" type="mapph1.py" output="screen" args="$(find dd2419_proj)/world_json/$(arg world_name).world.json"/>
+    <node name="pathNode" pkg="dd2419_proj" type="planner3Dph1.py" output="screen" args="$(find dd2419_proj)/world_json/$(arg world_name).world.json"/>
+</launch>

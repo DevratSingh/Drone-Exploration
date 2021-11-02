@@ -1,0 +1,450 @@
+#!/usr/bin/env python
+
+import sys
+import math
+import numpy as np
+import json
+
+from numpy.lib.function_base import append
+from rospy.topics import Publisher
+import tf_conversions
+import tf2_geometry_msgs
+import rospy
+import tf2_ros 
+import tf.transformations as tf_trans
+from geometry_msgs.msg import TransformStamped, Vector3, PoseStamped, Transform, Quaternion
+from aruco_msgs.msg import MarkerArray
+from scipy import stats
+from std_msgs.msg import Bool, Float32
+
+
+category_dict = {
+  'no_bicycle': 0,
+  'airport': 1,
+  'dangerous_curve_left': 2,
+  'dangerous_curve_right': 3,
+  'follow_left': 4,
+  'follow_right': 5,
+  'junction': 6,
+  'no_heavy_truck': 7,
+  'no_parking': 8,
+  'no_stopping_and_parking': 9,
+  'residential': 10,
+  'road_narrows_from_left': 11,
+  'road_narrows_from_right': 12,
+  'roundabout_warning': 13,
+  'stop': 14
+}
+
+
+def status_callback(robot_status):
+    global Noiseweight
+    if not robot_status:
+        Noiseweight = 0.1  # make the process noise low when not moving
+    else:
+        Noiseweight = 1
+
+
+def trafficsign_callback(msg):
+    global trans, Q, Q_traffic
+    Q = Q_traffic
+
+    T = np.array([measurement(marker) for marker in msg.markers]).T # list of measurements, [x,y,z,yaw]
+    ids = ['sign_'+str(marker.id) for marker in msg.markers] # the id:s of each measurement, and type of marker/sign
+
+    for id in ids:
+        try:
+            landmark_dict[id]
+        except:
+            rospy.loginfo('Landmark does not exist, ignoring measurements')
+            return
+
+    nu_bar, outlier  = batch_associate(T, msg, ids, M=1, Distancefactor=0.5) # assume all id's are unique for the traffic signs
+    N = int(sum(outlier)) # number of non-discarded measurements
+
+    if N > 0: # if we have any valid measurements
+
+        # H_bar and Q_bar are constant, so we can calculate them here
+        H_bar = np.tile(np.eye(3), (N,1))
+        Q_bar = np.kron(np.eye(N,dtype=int), Q)
+
+        idx = np.where(outlier==True)[0] # indicies of non-discareded measurements
+        mu = update(nu_bar[idx,:], H_bar, Q_bar)
+
+        t = Transform()
+        t.translation.x = mu[0]
+        t.translation.y = mu[1]
+        t.translation.z = 0
+        (t.rotation.x,
+         t.rotation.y,
+         t.rotation.z,
+         t.rotation.w) = tf_trans.quaternion_from_euler(0,
+                                                    0,
+                                                    mu[2])
+
+        trans.transform = t # update map -> odom tf
+        Q_traffic = Q
+
+
+def marker_callback(msg):
+    global trans, Q, Q_aruco
+    Q = Q_aruco
+
+    T = np.array([measurement(marker) for marker in msg.markers]).T
+    real_ids = ['marker_'+str(marker.id) for marker in msg.markers]
+    ids = ['marker_'+str(1) for marker in msg.markers] # id's are ignorent (set to constant 1)
+    
+    for id in real_ids:
+        try:
+            landmark_dict[id]
+        except:
+            rospy.loginfo('Landmark does not exist, ignoring measurements')
+            return
+
+    nu_bar, outlier  = batch_associate(T, msg, ids, M_markers, Distancefactor=10)
+    N = int(sum(outlier))
+
+    if N > 0:
+
+        H_bar = np.tile(np.eye(3), (N,1))
+        Q_bar = np.kron(np.eye(N,dtype=int), Q)
+
+        idx = np.where(outlier==True)[0]
+        mu = update(nu_bar[idx,:], H_bar, Q_bar)
+
+        t = Transform()
+        t.translation.x = mu[0]
+        t.translation.y = mu[1]
+        t.translation.z = 0
+        (t.rotation.x,
+         t.rotation.y,
+         t.rotation.z,
+         t.rotation.w) = tf_trans.quaternion_from_euler(0,
+                                                    0,
+                                                    mu[2])
+
+        trans.transform = t
+        Q_aruco = Q
+
+
+# This function performs the maximum likelihood association and outlier detection.
+# Note that the bearing error lies in the interval [-pi,pi)
+#           mu_bar(t)           3X1
+#           sigma_bar(t)        3X3
+#           z(t)                3Xn [x, y, yaw]'
+# Outputs: 
+#           c(t)                1Xn
+#           outlier             1Xn
+#           nu_bar(t)           2nX1
+#           H_bar(t)            2nX3
+def batch_associate(T, msg, ids, M, Distancefactor):
+
+    N = np.shape(T)[1] # number of measurements
+
+    outlier = np.zeros(N) # list of True/False for outlier detection
+    nu_bar = np.zeros((N,3))
+    for j in range(N): # for each measurement
+
+        distance = np.square(T[0,j]) + np.square(T[1,j]) + np.square(T[2,j])
+        # if the distance^2 is larger than 1.5m or lies in the corner of the camera, reject it
+        #print(distance)
+        if distance > 0.3*Distancefactor:# or np.abs(T[3,j]) > 2.2 or np.abs(T[3,j]) < 1.0:
+            outlier[j] = False
+            nu_bar[j,:] = 0
+            rospy.loginfo("marker too far away, discarding")
+            break
+
+        c_hat, nu, outlier_j = associate(msg.markers[j], ids[j], M)
+        outlier[j] = outlier_j
+        z = broadcast_marker_transform(msg.markers[j], c_hat, ids[j]) # 3x1 [x,y,yaw]'
+        nu = z - mu_bar
+        nu_bar[j,:] = nu
+
+    return nu_bar, outlier
+
+
+# This function performs the data association step
+# Input:
+#       mu_bar                        3x1
+#       sigma_bar(t)                  3x3
+#       z_i(t), the i_th measurement  3x1
+#       may integrate these EKF functions and don't need to pass these parameters. :(
+# Output:
+#       c(t)                          1x1
+#       outlier                       1x1
+#       nu^i(t)                       The innovation, difference of last mTo and measurement
+#       S^i(t)
+#       H^i(t)
+def associate(msg, id, M):
+
+    z_hat = np.zeros((3, M))
+    S = np.zeros((M,3,3))
+    nu = np.zeros((3, M))
+    phi = np.zeros(M)
+    D = np.zeros(M)
+
+    cv = 10*4.64 # 0.2
+    lambda_m = stats.chi2.cdf(cv, 3)
+    for j in range(M): # for each landmark
+        z_hat[:,j] = broadcast_marker_transform(msg, j, id)
+        # H is 3x3 identity matrix
+        S[j,:,:] = sigma_bar + Q
+        nu[:,j] = mu_bar - z_hat[:,j]
+        D[j] = np.linalg.multi_dot([nu[:,j].T, np.linalg.inv(S[j,:,:]), nu[:,j]])
+        phi[j] = 1/(math.sqrt(np.linalg.det(2 * np.pi * S[j,:,:]))) * np.exp(-0.5*np.linalg.multi_dot([nu[:,j].T, np.linalg.inv(S[j,:,:]), nu[:,j]]))
+
+    c_hat = np.argmax(phi)
+    nu_bar = nu[:,c_hat]
+    outlier = True # 'True' meaning it is not an outlier
+    if D[c_hat] > lambda_m and Flag: # only do outlier detection when localized
+        rospy.loginfo('outlier detected')
+        outlier = False # 'False' meaning it is an outlier
+
+    return c_hat, nu_bar, outlier
+
+
+# sigma_bar here is derived from data association, check algorithm 2
+def update(nu_bar, H_bar, Q_bar):
+    global sigma_bar, Q, R
+
+    nu_bar_star = np.asmatrix(nu_bar.flatten()).T
+
+    K = np.linalg.multi_dot([sigma_bar.dot(H_bar.T), np.linalg.inv(np.linalg.multi_dot([H_bar, sigma_bar, H_bar.T]) + Q_bar)])
+    mu = mu_bar.T + K.dot(nu_bar_star)
+    
+    sigma = (np.eye(3) - K.dot(H_bar)).dot(sigma_bar)
+
+    # compute the residual:
+    resdl = (H_bar.T - K) * np.linalg.multi_dot([nu_bar_star, nu_bar_star.T, (H_bar.T - K).T])
+    
+    # update the process noise R and measurement noise Q
+    alpha = 0.3
+    Q = alpha * Q + (1 - alpha) * (resdl * resdl.T + sigma_bar)
+    #if Q.item(0) < Q_default.item(0):
+    if np.linalg.norm(Q) < np.linalg.norm(Q_default):
+        Q = Q_default
+
+    #print(Q)
+    R = alpha * R + (1 - alpha) * np.linalg.multi_dot([K, nu_bar_star, nu_bar_star.T, K.T])
+    #if R.item(0) < R_default.item(0):
+    if np.linalg.norm(R) < np.linalg.norm(R_default):
+        R = R_default
+
+    sigma_bar = sigma
+    return mu
+
+# This function performs the prediction step.
+# Input: 
+#       No Control
+#       state vector should be derived from last transform mTo mu = [x, y, yaw]
+#       Sigma(t-1)       3x3
+# Output:
+#       Sigma_bar(t)     3x3
+def predict(odomtf):
+    global mu_bar, sigma_bar, Flag
+    _, _, yaw = tf_trans.euler_from_quaternion((odomtf.transform.rotation.x,
+                                              odomtf.transform.rotation.y,
+                                              odomtf.transform.rotation.z,
+                                              odomtf.transform.rotation.w))
+    mu_bar = np.array([[odomtf.transform.translation.x, odomtf.transform.translation.y, yaw]])
+    sigma_bar += R*Noiseweight # G is 3x3 identity matrix
+    loc_threshold = 0.29
+    uncert_pub.publish(np.linalg.norm(sigma_bar))
+    if Flag:
+        #if sigma_bar.item(0) > loc_threshold:
+        if np.linalg.norm(sigma_bar) > loc_threshold:
+            Flag = False
+            rospy.loginfo('unlocalized')
+            localized_pub.publish(Flag)
+    else:
+        #if sigma_bar.item(0) <= 0.25*loc_threshold:
+        if np.linalg.norm(sigma_bar) <= 0.25*loc_threshold:
+            Flag = True
+            rospy.loginfo('relocalized')
+            localized_pub.publish(Flag)
+
+
+def measurement(marker): # measurement used for data association, [x, y, z]
+    x = marker.pose.pose.position.x
+    y = marker.pose.pose.position.y
+    z = marker.pose.pose.position.z
+
+    roll, pitch, yaw = tf_trans.euler_from_quaternion((marker.pose.pose.orientation.x,
+                                                marker.pose.pose.orientation.y,
+                                                marker.pose.pose.orientation.z,
+                                                marker.pose.pose.orientation.w))
+    
+
+    return np.array([x, y, z, roll])
+    
+
+# This serves as the measurement used in the innovation
+def broadcast_marker_transform(m, c, id):
+
+    odom_map = PoseStamped()
+    odom_aruco = PoseStamped()
+    t = TransformStamped()
+
+    m.header.frame_id = 'cf1/camera_link'
+    if not tf_buf.can_transform(frame_id, m.header.frame_id, m.header.stamp, rospy.Duration(tf_timeout)):
+        rospy.logwarn_throttle(5.0, 'No transform from %s to %s', m.header.frame_id, frame_id)
+        return 
+    
+    # get the aruco's pose in odom frame
+    marker = tf_buf.transform(PoseStamped(header=m.header, pose=m.pose.pose), frame_id)
+    
+    # inverse the transform, get the odom's pose in aruco frame
+    trsl =[marker.pose.position.x, marker.pose.position.y, marker.pose.position.z]
+    rot = [marker.pose.orientation.x, marker.pose.orientation.y, marker.pose.orientation.z, marker.pose.orientation.w]
+    transform = tf_trans.concatenate_matrices(tf_trans.translation_matrix(trsl), tf_trans.quaternion_matrix(rot))
+    inversed_transform = tf_trans.inverse_matrix(transform)
+    odom_aruco.header = marker.header
+    odom_aruco.header.frame_id = id + '#' +str(c)
+    odom_aruco.pose.position = Vector3(*tf_trans.translation_from_matrix(inversed_transform))
+    odom_aruco.pose.orientation = Quaternion(*tf_trans.quaternion_from_matrix(inversed_transform))
+
+    # get the odom's pose in map frame
+    if not tf_buf.can_transform(odom_aruco.header.frame_id, 'map', odom_aruco.header.stamp,rospy.Duration(tf_timeout)):
+        rospy.logwarn_throttle(5.0, 'No transform from %s to map' % odom_aruco.header.frame_id)
+        return
+
+    # Transform from aruco to map 
+    odom_map = tf_buf.transform(odom_aruco, 'map')
+
+    # only give ywa, x, y to odom/map transform
+    t = TransformStamped()
+    t.transform.translation = odom_map.pose.position
+    t.transform.translation.z = 0
+    _, _, yaw = tf_trans.euler_from_quaternion((odom_map.pose.orientation.x,
+                                                       odom_map.pose.orientation.y,
+                                                       odom_map.pose.orientation.z,
+                                                       odom_map.pose.orientation.w))
+    (t.transform.rotation.x,
+     t.transform.rotation.y,
+     t.transform.rotation.z,
+     t.transform.rotation.w) = tf_trans.quaternion_from_euler(0,
+                                                              0,
+                                                              yaw)
+
+    return np.array([t.transform.translation.x, t.transform.translation.y, yaw]).T # measurement
+
+
+rospy.init_node('EKF_localization')
+tf_buf = tf2_ros.Buffer()
+tf_lstn  = tf2_ros.TransformListener(tf_buf)
+br = tf2_ros.TransformBroadcaster()
+tf_timeout = 2
+frame_id = 'cf1/odom'
+
+localized_pub = Publisher('localized_flag', Bool, queue_size=1, latch = True)
+uncert_pub = Publisher('uncert', Float32 , queue_size=1, latch = True)
+
+trans = TransformStamped()
+trans.transform.rotation.w = 1
+trans.header.frame_id = 'map'
+trans.child_frame_id = 'cf1/odom'
+
+# the uncertainty of initial pose of odom [x, y, yaw]
+sigma_bar = np.array(
+        [[1.0, 0, 0],
+         [0, 1.0, 0],
+         [0, 0, 0.3]
+        ])*1e-0
+# the process noise        
+R = np.array(
+    [[1.0, 0, 0],
+     [0, 1.0, 0],
+     [0, 0, 0.3]
+    ])*1e-1
+
+R_default = np.array(
+            [[1.0, 0, 0],
+            [0, 1.0, 0],
+            [0, 0, 0.3]
+            ])*2e-3
+# the measurement noise
+Q_aruco = np.array(
+          [[1.0, 0, 0],
+          [0, 1.0, 0],
+          [0, 0, 0.3]
+          ])*1e-1
+
+Q_traffic = np.array(
+            [[1.0, 0, 0],
+            [0, 1.0, 0],
+            [0, 0, 0.3]
+            ])*4e-1
+
+Q_default = np.array(
+            [[1.0, 0, 0],
+            [0, 1.0, 0],
+            [0, 0, 0.3]
+            ])*8e-2
+
+# initial value of measurement noise
+Q = 1.5 * Q_default
+Noiseweight = 1
+
+def main(argv=sys.argv):
+    global trans, landmark_dict, Flag, M_markers, M_signs
+
+    rate = rospy.Rate(10)
+
+    # Let ROS filter through the arguments
+    args = rospy.myargv(argv=argv)
+
+    # Load world JSON
+    with open(args[1], 'rb') as f:
+        world = json.load(f)
+
+    # Create dictionary of landmarks
+    landmark_dict = {}
+
+    # add ArUco markers
+    if world['markers']:
+        sub_map = []
+        id = world['markers'][0]['id']
+        M_markers = 0
+        for m in world['markers']:
+            M_markers += 1 # number of landmarks (markers)
+            if not id == m['id']:
+                landmark_dict.update({'marker_'+str(id): sub_map})
+
+                sub_map = []
+                id = m['id']
+
+            sub_map.append(m['pose']['position'])
+        landmark_dict.update({'marker_'+str(id): sub_map})
+
+    # add traffic signs
+    if world['roadsigns']:
+        sub_map = []
+        sign = world['roadsigns'][0]['sign']
+        for m in world['roadsigns']:
+            if not sign == m['sign']:
+                landmark_dict.update({'sign_'+str(category_dict[sign]): sub_map})
+
+                sub_map = []
+                sign = m['sign']
+
+            sub_map.append(m['pose']['position'])
+        landmark_dict.update({'sign_'+str(category_dict[sign]): sub_map})
+
+    Flag = False
+    rospy.loginfo('unlocalized')
+    localized_pub.publish(Flag)
+    rospy.sleep(rospy.Duration(0.1))
+
+    sub_trafficmarker = rospy.Subscriber('/trafficsign/detected', MarkerArray, trafficsign_callback, queue_size=1)
+    sub_marker = rospy.Subscriber('/aruco/markers', MarkerArray, marker_callback, queue_size=1)
+    robot_status = rospy.Subscriber('robotStatus', Bool, status_callback, queue_size=1)
+
+    while not rospy.is_shutdown():
+        trans.header.stamp = rospy.Time.now()
+        predict(trans)
+        br.sendTransform(trans)
+        rate.sleep()
+
+    
+if __name__ == '__main__':
+    main()

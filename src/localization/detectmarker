@@ -1,0 +1,76 @@
+#!/usr/bin/env python
+
+import sys
+import math
+import json
+import tf_conversions
+import tf2_geometry_msgs
+import rospy
+import tf2_ros 
+from tf.transformations import quaternion_from_euler, euler_from_quaternion
+from geometry_msgs.msg import TransformStamped, Vector3, PoseStamped, Transform
+from aruco_msgs.msg import MarkerArray
+from crazyflie_gazebo.msg import Position
+
+
+def marker_callback(msg):
+    for marker in msg.markers:
+        broadcast_marker_transform(marker)
+
+def broadcast_marker_transform(m):
+    global trans, odomtf
+
+    m.header.frame_id = 'cf1/camera_link'
+    if not tf_buf.can_transform(frame_id, m.header.frame_id, m.header.stamp, rospy.Duration(tf_timeout)):
+        rospy.logwarn_throttle(5.0, 'No transform from %s to %s', m.header.frame_id, frame_id)
+        return 
+    
+    marker = tf_buf.transform(PoseStamped(header=m.header, pose=m.pose.pose), frame_id)
+    
+    t = TransformStamped()
+    t.header = marker.header
+    t.header.frame_id = 'aruco/marker' + str(m.id)
+    t.child_frame_id = 'aruco/marker/Landmark' + str(m.id)
+    t.transform.rotation = marker.pose.orientation
+    t.transform.rotation.w = -marker.pose.orientation.w
+    br.sendTransform(t)
+
+    trans.header = marker.header
+    trans.header.frame_id = 'aruco/marker/Landmark' + str(m.id)
+    marker.pose.position.x = -marker.pose.position.x
+    marker.pose.position.y = -marker.pose.position.y
+    marker.pose.position.z = -marker.pose.position.z
+
+    trans.transform.translation = marker.pose.position
+    trans.transform.rotation.w = 1
+    br.sendTransform(trans)
+
+    odomtf = tf_buf.lookup_transform('map', frame_id, rospy.Time(0), rospy.Duration(tf_timeout)) # update latest tf between map -> cf1/odom
+
+rospy.init_node('detectmarker', anonymous=True)
+sub_marker = rospy.Subscriber('/aruco/markers', MarkerArray, marker_callback)
+tf_buf = tf2_ros.Buffer()
+tf_lstn  = tf2_ros.TransformListener(tf_buf)
+br = tf2_ros.TransformBroadcaster()
+tf_timeout = 2
+frame_id = 'cf1/odom'
+
+trans = TransformStamped()
+trans.transform.rotation.w = 1
+trans.header.frame_id = 'map'
+trans.child_frame_id = 'cf1/odom'
+odomtf = trans # this is the latest tf between map -> cf1/odom
+
+def main():
+    
+    while not rospy.is_shutdown():
+    
+        # if we lost vision with the aruco marker, we create a new tf between map -> cf1/odom that was the latest transform
+        if not tf_buf.can_transform(frame_id, 'map', rospy.Time.now(), rospy.Duration(0.12)):
+            trans = odomtf
+            trans.header.stamp = rospy.Time.now()
+            br.sendTransform(trans)
+
+    
+if __name__ == '__main__':
+    main()

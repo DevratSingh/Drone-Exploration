@@ -1,0 +1,9 @@
+<launch>
+    <arg name= "world_name" default= "sample"/>
+    
+    <node name="brain" pkg="dd2419_proj" type="brain3D.py" output="screen" args="$(find dd2419_proj)/world_json/$(arg world_name).world.json"/>
+    <node name="globalfrontier" pkg="dd2419_proj" type="globalfrontierph1.py" output="screen" args="$(find dd2419_proj)/world_json/$(arg world_name).world.json"/>
+    <node name="pathNode" pkg="dd2419_proj" type="planner3Dph1.py" output="screen" args="$(find dd2419_proj)/world_json/$(arg world_name).world.json"/>
+    <node name="filterNode" pkg="dd2419_proj" type="filterph1.py" output="screen"/>
+    <node name="AllocatorNode" pkg="dd2419_proj" type="taskallocatorph1.py" output="screen"/>
+</launch>
