@@ -13,3 +13,5 @@ This project was implemented using ROS, with the implemented components being gr
 [System Design Figure](SysDiagph1.png)
 
 [Brief System Design Report](Brief%20System%20Design%20Report%20_Crazyflie%20Project.pdf)
+
+Note: This repo has been cloned from my KTH github account to my personal github, so that it can be viewed by people outside KTH
