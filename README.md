@@ -8,7 +8,7 @@ This project was implemented using ROS, with the implemented components being gr
 </p> 
 
 #### Exploration through KF localization, Traffic sign detection using CNN and RRT-based exploration 
-[![DD2419ph1](https://i.postimg.cc/Qd5sttnM/thumbph1.png)](https://youtu.be/8_smu3H0q7g "Project Video")
+[![DD2419ph1](https://github.com/DevratSingh/Myprojects/blob/main/Images/thumbph1.png)](https://youtu.be/8_smu3H0q7g "Project Video")
 
 [System Design Figure](SysDiagph1.png)
 
